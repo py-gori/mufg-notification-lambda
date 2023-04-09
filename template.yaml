@@ -1,15 +1,12 @@
+#https://repost.aws/ja/knowledge-center/cloudformation-s3-notification-lambda
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: >
-  mufg-notification-lambda
+Description: >-
+  Sample template to illustrate use of existing S3 bucket as an event source for a Lambda function
 
-  Sample SAM Template for mufg-notification-lambda
-
-# More info about Globals: https://github.com/awslabs/serverless-application-model/blob/master/docs/globals.rst
 Globals:
   Function:
     Timeout: 300
-    MemorySize: 128
 
 Parameters:
   LineToken:
@@ -18,38 +15,65 @@ Parameters:
     Type: String
 
 Resources:
+  LambdaIAMRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Path: /
+      Policies:
+        - PolicyName: root
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 's3:GetBucketNotification'
+                  - 's3:PutBucketNotification'
+                Resource: !Sub 'arn:aws:s3:::${S3Bucket}'
+              - Effect: Allow
+                Action:
+                  - 'logs:CreateLogGroup'
+                  - 'logs:CreateLogStream'
+                  - 'logs:PutLogEvents'
+                Resource: 'arn:aws:logs:*:*:*'
+
   MufgNotificationFunction:
     Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
     Properties:
       CodeUri: mufg_notification/
       Handler: app.handler
       Runtime: python3.7
-      Events:
-        S3PutEvent:
-          Type: S3
-          Properties:
-            Bucket: !Ref S3Bucket
-            Events: s3:ObjectCreated:*
-            Filter:
-              S3Key:
-                Rules:
-                  - Name: prefix
-                    Value: top_page
-                  - Name: prefix
-                    Value: product_page
+      Architectures:
+        - x86_64
+      MemorySize: 512
+      Role: !GetAtt LambdaIAMRole.Arn
       Environment:
         Variables:
           LINE_TOKEN: !Ref LineToken
           S3_BUCKET: !Ref S3Bucket
-      Policies:
-        - S3CrudPolicy:
-            BucketName: !Ref S3Bucket
 
-#  Bs4Layer:
-#    Type: AWS::Serverless::LayerVersion
-#    Properties:
-#      ContentUri: bs4
-#      CompatibleRuntimes:
-#        - python3.7
-#    Metadata:
-#      BuildMethod: python3.7
+  LambdaInvokePermission:
+    Type: 'AWS::Lambda::Permission'
+    Properties:
+      FunctionName: !GetAtt MufgNotificationFunction.Arn
+      Action: 'lambda:InvokeFunction'
+      Principal: s3.amazonaws.com
+      SourceAccount: !Ref 'AWS::AccountId'
+      SourceArn: !Sub 'arn:aws:s3:::${S3Bucket}'
+
+  LambdaTrigger:
+    Type: 'Custom::LambdaTrigger'
+    DependsOn: LambdaInvokePermission
+    Properties:
+      ServiceToken: "arn:aws:lambda:ap-northeast-1:389670453211:function:mufg-scrape-lambda-MufgScrapeFunction-pOuVbiFibKnW"
+      LambdaArn: !GetAtt MufgNotificationFunction.Arn
+      Bucket: !Ref S3Bucket
+      Prefix: "top_page"
